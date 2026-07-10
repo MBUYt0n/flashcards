@@ -149,10 +149,47 @@
     </div>
 
     <script>
+
+    
       // Set up PDF.js worker
       pdfjsLib.GlobalWorkerOptions.workerSrc =
         "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js";
+        // Name of the default PDF file you will store in your GitHub repo
+        const DEFAULT_PDF_NAME = 'gregmat_wordlist.pdf'; 
 
+        // Automatically fetch and parse the default PDF on page load
+        window.onload = async function() {
+            document.getElementById('card-front-text').innerText = "Loading default word list...";
+            
+            try {
+                // Fetch the PDF file as raw binary data from your GitHub server
+                const response = await fetch(DEFAULT_PDF_NAME);
+                if (!response.ok) throw new Error("Default PDF file not found.");
+                
+                const arrayBuffer = await response.arrayBuffer();
+                const typedarray = new Uint8Array(arrayBuffer);
+                
+                // Parse the PDF using PDF.js
+                const pdf = await pdfjsLib.getDocument(typedarray).promise;
+                let fullText = "";
+
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const textContent = await page.getTextContent();
+                    const pageText = textContent.items.map(item => item.str).join(" ");
+                    fullText += pageText + " ";
+                }
+
+                // Process the extracted text into flashcards
+                parseWords(fullText);
+
+            } catch (error) {
+                console.error(error);
+                document.getElementById('card-front-text').innerText = "Upload a PDF to start!";
+            }
+        };
+
+        // (Keep your existing manual file upload listener underneath this so users can still upload their own custom lists!)
       let wordList = [];
       let currentIndex = 0;
 
