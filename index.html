@@ -125,15 +125,26 @@
       <button onclick="lookupManualWord()">Search</button>
     </div>
 
-    <div class="controls" id="navigation" style="display:none;">
-        <button onclick="prevWord()">Previous</button>
-        <span id="word-counter">0 / 0</span>
-        <button onclick="nextWord()">Next</button>
-        
-        <!-- New Jump Feature -->
-        <span style="margin-left: 15px; color: #555;">Jump to:</span>
-        <input type="number" id="jump-index" min="1" style="width: 60px; padding: 5px; text-align: center;" placeholder="#">
-        <button onclick="jumpToWord()" style="padding: 5px 10px; background-color: #3498db;">Go</button>
+    <div class="controls" id="navigation" style="display: none">
+      <button onclick="prevWord()">Previous</button>
+      <span id="word-counter">0 / 0</span>
+      <button onclick="nextWord()">Next</button>
+
+      <!-- New Jump Feature -->
+      <span style="margin-left: 15px; color: #555">Jump to:</span>
+      <input
+        type="number"
+        id="jump-index"
+        min="1"
+        style="width: 60px; padding: 5px; text-align: center"
+        placeholder="#"
+      />
+      <button
+        onclick="jumpToWord()"
+        style="padding: 5px 10px; background-color: #3498db"
+      >
+        Go
+      </button>
     </div>
 
     <!-- Flashcard Structure -->
@@ -149,51 +160,48 @@
     </div>
 
     <script>
-
-    
       // Set up PDF.js worker
       pdfjsLib.GlobalWorkerOptions.workerSrc =
         "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js";
-        // Name of the default PDF file you will store in your GitHub repo
-        const DEFAULT_PDF_NAME = 'gregmat_wordlist.pdf'; 
 
-        // Automatically fetch and parse the default PDF on page load
-        window.onload = async function() {
-            document.getElementById('card-front-text').innerText = "Loading default word list...";
-            
-            try {
-                // Fetch the PDF file as raw binary data from your GitHub server
-                const response = await fetch(DEFAULT_PDF_NAME);
-                if (!response.ok) throw new Error("Default PDF file not found.");
-                
-                const arrayBuffer = await response.arrayBuffer();
-                const typedarray = new Uint8Array(arrayBuffer);
-                
-                // Parse the PDF using PDF.js
-                const pdf = await pdfjsLib.getDocument(typedarray).promise;
-                let fullText = "";
+      const DEFAULT_PDF_NAME = "gregmat_wordlist.pdf";
 
-                for (let i = 1; i <= pdf.numPages; i++) {
-                    const page = await pdf.getPage(i);
-                    const textContent = await page.getTextContent();
-                    const pageText = textContent.items.map(item => item.str).join(" ");
-                    fullText += pageText + " ";
-                }
-
-                // Process the extracted text into flashcards
-                parseWords(fullText);
-
-            } catch (error) {
-                console.error(error);
-                document.getElementById('card-front-text').innerText = "Upload a PDF to start!";
-            }
-        };
-
-        // (Keep your existing manual file upload listener underneath this so users can still upload their own custom lists!)
       let wordList = [];
       let currentIndex = 0;
 
-      // 1. Listen for PDF Upload
+      // Automatically fetch and parse the default PDF on page load
+      window.onload = async function () {
+        document.getElementById("card-front-text").innerText =
+          "Loading default word list...";
+
+        try {
+          const response = await fetch(DEFAULT_PDF_NAME);
+          if (!response.ok) throw new Error("Default PDF file not found.");
+
+          const arrayBuffer = await response.arrayBuffer();
+          const typedarray = new Uint8Array(arrayBuffer);
+
+          const pdf = await pdfjsLib.getDocument(typedarray).promise;
+          let fullText = "";
+
+          for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const textContent = await page.getTextContent();
+            const pageText = textContent.items
+              .map((item) => item.str)
+              .join(" ");
+            fullText += pageText + " ";
+          }
+
+          parseWords(fullText);
+        } catch (error) {
+          console.error(error);
+          document.getElementById("card-front-text").innerText =
+            "Upload a PDF to start!";
+        }
+      };
+
+      // 1. Listen for Manual PDF Upload
       document
         .getElementById("pdf-upload")
         .addEventListener("change", async (e) => {
@@ -206,7 +214,6 @@
             const pdf = await pdfjsLib.getDocument(typedarray).promise;
             let fullText = "";
 
-            // Loop through all pages and extract text
             for (let i = 1; i <= pdf.numPages; i++) {
               const page = await pdf.getPage(i);
               const textContent = await page.getTextContent();
@@ -221,22 +228,20 @@
           reader.readAsArrayBuffer(file);
         });
 
-      // 2. Parse text based on format layout (Word - Meaning)
+      // 2. Parse text layout (FIXED: Added regex index reset)
       function parseWords(text) {
         wordList = [];
 
-        // Regex tailored to grab lines like "1. abstain - restrain..." or "word - definition"
-        // It searches for words followed by a dash or hyphen
         const regex = /(?:^|\s|\d+\.)\s*([a-zA-Z]+)\s*-\s*/g;
-        let match;
+        regex.lastIndex = 0; // FORCE the regex to start scanning from the beginning of the text every time
 
+        let match;
         while ((match = regex.exec(text)) !== null) {
           if (match[1] && match[1].length > 2) {
             wordList.push(match[1].toLowerCase());
           }
         }
 
-        // Remove duplicates
         wordList = [...new Set(wordList)];
 
         if (wordList.length > 0) {
@@ -245,14 +250,14 @@
           fetchWordData(wordList[currentIndex]);
         } else {
           alert("Couldn't find any words matching 'word - definition' layout.");
+          document.getElementById("card-front-text").innerText =
+            "Upload a PDF to start!";
         }
       }
 
       // 3. Fetch data from Dictionary API
       async function fetchWordData(word) {
-        // Unflip card if it's currently flipped
         document.getElementById("flashcard").classList.remove("flipped");
-
         document.getElementById("card-front-text").innerText = "Loading...";
         updateCounter();
 
@@ -263,17 +268,16 @@
           if (!response.ok) throw new Error("Word not found");
           const data = await response.json();
 
-          displayWordData(word, data[0]);
+          displayWordData(word, data);
         } catch (error) {
-          console.log(error);
           document.getElementById("card-front-text").innerText = word;
-          document.getElementById("card-back-text").innerHTML =
-            `<p style="color:red;">Failed to fetch data for this word.</p>`;
+          document.getElementById("card-back-text").innerHTML = `
+              <div class="section-title" style="color:red;">Error:</div>
+              <p>Failed to find definition or fetch data for "${word}".</p>
+          `;
         }
       }
 
-      // 4. Populate Flashcard Content (Updated for deep API structure)
-      // 4. Populate Flashcard Content (Robust Array/Object Handling)
       // 4. Populate Flashcard Content (Shows ALL definitions)
       function displayWordData(word, rawData) {
         document.getElementById("card-front-text").innerText = word;
@@ -396,36 +400,45 @@
       }
 
       function updateCounter() {
-            if (wordList.length > 0) {
-                document.getElementById('word-counter').innerText = `${currentIndex + 1} / ${wordList.length}`;
-                // Keep the input field's max attribute perfectly synced with the deck size
-                document.getElementById('jump-index').max = wordList.length;
-            }
+        if (wordList.length > 0) {
+          document.getElementById("word-counter").innerText =
+            `${currentIndex + 1} / ${wordList.length}`;
+          // Keep the input field's max attribute perfectly synced with the deck size
+          document.getElementById("jump-index").max = wordList.length;
         }
+      }
 
       function jumpToWord() {
-            const input = document.getElementById('jump-index');
-            const targetNumber = parseInt(input.value, 10);
+        const input = document.getElementById("jump-index");
+        const targetNumber = parseInt(input.value, 10);
 
-            // Validate that the number is within our word list bounds
-            if (isNaN(targetNumber) || targetNumber < 1 || targetNumber > wordList.length) {
-                alert(`Please enter a valid card number between 1 and ${wordList.length}`);
-                return;
-            }
-
-            // Convert 1-based user input to 0-based array index
-            currentIndex = targetNumber - 1;
-            fetchWordData(wordList[currentIndex]);
-            
-            // Clear the input field for next time
-            input.value = '';
+        // Validate that the number is within our word list bounds
+        if (
+          isNaN(targetNumber) ||
+          targetNumber < 1 ||
+          targetNumber > wordList.length
+        ) {
+          alert(
+            `Please enter a valid card number between 1 and ${wordList.length}`,
+          );
+          return;
         }
 
-        // Optional Quality-of-Life: Pressing 'Enter' inside the input also triggers the jump
-        document.getElementById('jump-index').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                jumpToWord();
-            }
+        // Convert 1-based user input to 0-based array index
+        currentIndex = targetNumber - 1;
+        fetchWordData(wordList[currentIndex]);
+
+        // Clear the input field for next time
+        input.value = "";
+      }
+
+      // Optional Quality-of-Life: Pressing 'Enter' inside the input also triggers the jump
+      document
+        .getElementById("jump-index")
+        .addEventListener("keypress", function (e) {
+          if (e.key === "Enter") {
+            jumpToWord();
+          }
         });
     </script>
   </body>
