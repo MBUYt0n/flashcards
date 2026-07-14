@@ -374,8 +374,12 @@
 						.join(", ");
 				}
 
-				// Build and display the back of the card (No scrollable wrapper)
+				// Build and display the back of the card (Includes the main word at the top)
 				document.getElementById("card-back-text").innerHTML = `
+        <div style="font-size: 1.8rem; font-weight: bold; color: #2c3e50; margin-bottom: 15px; border-bottom: 2px solid #ecf0f1; padding-bottom: 8px; width: 100%; text-transform: capitalize;">
+            ${word}
+        </div>
+        
         <div class="section-title">Definitions:</div>
         <div style="width: 100%; margin-bottom: 10px;">${definitionsHTML}</div>
         
@@ -397,6 +401,7 @@
 					.classList.toggle("flipped");
 			}
 
+			// 6. Navigation and Search
 			function lookupNestedWord(word) {
 				// Push custom word to the list seamlessly and display it
 				wordList.push(word);
