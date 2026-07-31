@@ -88,6 +88,7 @@
 				align-items: flex-start;
 				justify-content: flex-start;
 				font-size: 1.05rem;
+				overflow-y: auto;
 			}
 
 			/* Inside Card Styling */
@@ -109,6 +110,13 @@
 			.example-sentence {
 				font-style: italic;
 				color: #555;
+			}
+			.retry-button {
+				margin-top: 12px;
+				background-color: #3498db;
+			}
+			.retry-button:hover {
+				background-color: #2980b9;
 			}
 		</style>
 	</head>
@@ -173,6 +181,18 @@
 			window.onload = async function () {
 				document.getElementById("card-front-text").innerText =
 					"Loading default word list...";
+
+				// Under file:// this fetch is blocked by the browser, so the
+				// default list can only load when served over http.
+				if (window.location.protocol === "file:") {
+					document.getElementById("card-front-text").innerText =
+						"Upload a PDF to start!";
+					console.info(
+						"Serve this page over http (e.g. `python3 -m http.server`) to auto-load " +
+							DEFAULT_PDF_NAME,
+					);
+					return;
+				}
 
 				try {
 					const response = await fetch(DEFAULT_PDF_NAME);
@@ -269,8 +289,55 @@
 				}
 			}
 
-			// 3. Fetch data from Dictionary API
+			// 3. Fetch data from Dictionary API (retry + cache + stale-response guard)
+			const API_BASE = "https://api.dictionaryapi.dev/api/v2/entries/en/";
+			const MAX_ATTEMPTS = 4;
+			const BASE_BACKOFF_MS = 400;
+
+			const wordCache = new Map();
+			let activeRequestId = 0;
+
+			const sleep = (ms) =>
+				new Promise((resolve) => setTimeout(resolve, ms));
+
+			async function fetchDefinition(word) {
+				let lastError;
+
+				for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+					if (attempt > 0)
+						await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
+
+					let response;
+					try {
+						response = await fetch(
+							API_BASE + encodeURIComponent(word),
+						);
+					} catch (networkError) {
+						// The API omits CORS headers on 5xx, so those arrive
+						// here as an opaque "Failed to fetch" with no status.
+						lastError = networkError;
+						continue;
+					}
+
+					if (response.ok) return response.json();
+
+					if (response.status === 404) {
+						throw Object.assign(new Error("no entry"), {
+							kind: "not-found",
+						});
+					}
+
+					lastError = new Error(
+						"Upstream returned " + response.status,
+					);
+				}
+
+				throw Object.assign(lastError, { kind: "unavailable" });
+			}
+
 			async function fetchWordData(word) {
+				const requestId = ++activeRequestId;
+
 				document
 					.getElementById("flashcard")
 					.classList.remove("flipped");
@@ -278,24 +345,63 @@
 					"Loading...";
 				updateCounter();
 
-				try {
-					const response = await fetch(
-						`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`,
-					);
-					if (!response.ok) throw new Error("Word not found");
-					const data = await response.json();
+				if (wordCache.has(word)) {
+					displayWordData(word, wordCache.get(word));
+					return;
+				}
 
+				try {
+					const data = await fetchDefinition(word);
+					if (requestId !== activeRequestId) return;
+					wordCache.set(word, data);
 					displayWordData(word, data);
 				} catch (error) {
-					document.getElementById("card-front-text").innerText = word;
-					document.getElementById("card-back-text").innerHTML = `
-              <div class="section-title" style="color:red;">Error:</div>
-              <p>Failed to find definition or fetch data for "${word}".</p>
-          `;
+					if (requestId !== activeRequestId) return;
+					showLookupError(word, error);
 				}
 			}
 
+			function showLookupError(word, error) {
+				document.getElementById("card-front-text").innerText = word;
+
+				const isMissing = error.kind === "not-found";
+				const heading = isMissing
+					? "No entry found"
+					: "Dictionary service unavailable";
+				const body = isMissing
+					? 'The dictionary has no entry for "' + word + '".'
+					: 'The API returned an error for "' +
+						word +
+						'" after ' +
+						MAX_ATTEMPTS +
+						" attempts. This is usually temporary.";
+
+				document.getElementById("card-back-text").innerHTML =
+					'<div class="section-title" style="color:#c0392b;">' +
+					escapeHtml(heading) +
+					"</div><p>" +
+					escapeHtml(body) +
+					"</p>" +
+					(isMissing
+						? ""
+						: '<button type="button" class="retry-button" data-action="retry">Try again</button>');
+			}
+
 			// 4. Populate Flashcard Content (Shows ALL definitions)
+			function escapeHtml(value) {
+				return String(value).replace(
+					/[&<>"']/g,
+					(character) =>
+						({
+							"&": "&amp;",
+							"<": "&lt;",
+							">": "&gt;",
+							'"': "&quot;",
+							"'": "&#39;",
+						})[character],
+				);
+			}
+
 			function displayWordData(word, rawData) {
 				document.getElementById("card-front-text").innerText = word;
 
@@ -325,10 +431,12 @@
 								if (def.definition) {
 									// Optional: Include part of speech (e.g., "noun: A challenge, trial.")
 									const part = meaning.partOfSpeech
-										? `<em>(${meaning.partOfSpeech})</em> `
+										? "<em>(" +
+											escapeHtml(meaning.partOfSpeech) +
+											")</em> "
 										: "";
 									definitionsArray.push(
-										`${part}${def.definition}`,
+										part + escapeHtml(def.definition),
 									);
 								}
 
@@ -352,24 +460,29 @@
 				let definitionsHTML = "No definitions found.";
 				if (definitionsArray.length > 0) {
 					definitionsHTML =
-						`<ol style="margin: 0; padding-left: 20px;">` +
+						'<ol style="margin: 0; padding-left: 20px;">' +
 						definitionsArray
-							.map((def) => `<li>${def}</li>`)
+							.map((def) => "<li>" + def + "</li>")
 							.join("") +
-						`</ol>`;
+						"</ol>";
 				}
 
 				// Convert our synonym set back into an array for formatting
 				const finalSynonyms = Array.from(synonymSet);
 
-				// Convert synonyms into clickable HTML spans
+				// The word rides in a data attribute so synonyms containing
+				// quotes (o'clock, ne'er-do-well) stay clickable.
 				let synonymsHTML = "None found.";
 				if (finalSynonyms.length > 0) {
 					synonymsHTML = finalSynonyms
 						.slice(0, 6)
 						.map(
 							(syn) =>
-								`<span class="clickable-synonym" onclick="lookupNestedWord('${syn}')">${syn}</span>`,
+								'<span class="clickable-synonym" data-word="' +
+								escapeHtml(syn) +
+								'">' +
+								escapeHtml(syn) +
+								"</span>",
 						)
 						.join(", ");
 				}
@@ -377,25 +490,39 @@
 				// Build and display the back of the card (Includes the main word at the top)
 				document.getElementById("card-back-text").innerHTML = `
         <div style="font-size: 1.8rem; font-weight: bold; color: #2c3e50; margin-bottom: 15px; border-bottom: 2px solid #ecf0f1; padding-bottom: 8px; width: 100%; text-transform: capitalize;">
-            ${word}
+            ${escapeHtml(word)}
         </div>
-        
+
         <div class="section-title">Definitions:</div>
         <div style="width: 100%; margin-bottom: 10px;">${definitionsHTML}</div>
-        
+
         <div class="section-title">Example:</div>
-        <div class="example-sentence">${example ? `"${example}"` : "No example sentence available."}</div>
-        
+        <div class="example-sentence">${example ? '"' + escapeHtml(example) + '"' : "No example sentence available."}</div>
+
         <div class="section-title">Synonyms (Click to explore):</div>
         <div style="margin-top: 5px;">${synonymsHTML}</div>
     `;
 			}
 
 			// 5. Interaction Mechanics
+			document
+				.getElementById("card-back-text")
+				.addEventListener("click", (event) => {
+					const synonym = event.target.closest(".clickable-synonym");
+					if (synonym) {
+						event.stopPropagation();
+						lookupNestedWord(synonym.dataset.word);
+						return;
+					}
+
+					const retry = event.target.closest('[data-action="retry"]');
+					if (retry) {
+						event.stopPropagation();
+						fetchWordData(wordList[currentIndex]);
+					}
+				});
+
 			function flipCard(event) {
-				// Don't flip the card if a clickable synonym was selected
-				if (event.target.classList.contains("clickable-synonym"))
-					return;
 				document
 					.getElementById("flashcard")
 					.classList.toggle("flipped");
